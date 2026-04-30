@@ -88,6 +88,8 @@ web_search({ query: "...", provider: "exa" })
 web_search({ query: "...", includeContent: true })
 web_search({ queries: ["query 1", "query 2"], workflow: "none" })
 web_search({ queries: ["query 1", "query 2"], workflow: "summary-review" })
+web_search({ query: "react hooks docs", workflow: "none", searchIntent: "reference" })
+web_search({ query: "breaking news on ai", workflow: "none", searchIntent: "fresh" })
 ```
 
 | Parameter | Description |
@@ -99,6 +101,23 @@ web_search({ queries: ["query 1", "query 2"], workflow: "summary-review" })
 | `provider` | `auto` (default), `exa`, `perplexity`, or `gemini` |
 | `includeContent` | Fetch full page content from sources in background |
 | `workflow` | `none` (skip curator) or `summary-review` (auto-generate summary draft after search completion, default) |
+| `searchIntent` | Optional hint biasing provider ordering in `auto` mode: `reference` (docs/canonical pages, tries Exa first), `fresh` (breaking news, tries Perplexity then Gemini first), or `auto` (default, uses a local heuristic). Only applied when `provider` resolves to `auto` **and** `workflow` is `none`; ignored for explicit providers and for the curator workflow. |
+
+#### Provider ordering and observability
+
+In `auto` mode with `workflow: "none"`, `searchIntent` selects one of two ordered chains, then intersects it with the set of providers actually configured on the machine:
+
+- `reference` (or the heuristic default): Exa → Perplexity → Gemini.
+- `fresh`: Perplexity → Gemini → Exa.
+
+The existing short-circuit fallback semantics are preserved: the first provider that returns a usable result wins, non-abort errors move to the next provider, abort errors propagate, and Exa's "monthly free tier exhausted" response is treated as a fallthrough in auto mode. If no provider is configured, the usual no-provider error is raised unchanged.
+
+When routing ran through `auto` + `workflow: "none"`, the tool result's `details` object also includes:
+
+- `resolvedSearchIntent`: `"reference"` or `"fresh"` — the intent used for this call (after any heuristic fallback).
+- `autoProviderOrder`: the post-availability provider chain that would have been attempted, in order.
+
+Both fields are omitted for explicit providers and for the `summary-review` curator workflow, so the curator's provider chip continues to reflect what was actually run. `searchIntent` is not read from `~/.pi/web-search.json` and is not injected into provider HTTP payloads.
 
 ### code_search
 

@@ -11,8 +11,12 @@ import { hasExaApiKey, isExaAvailable, searchWithExa } from "./exa.js";
 export type SearchProvider = "auto" | "perplexity" | "gemini" | "exa";
 export type ResolvedSearchProvider = Exclude<SearchProvider, "auto">;
 
+export type SearchIntent = "auto" | "reference" | "fresh";
+
 export interface AttributedSearchResponse extends SearchResponse {
 	provider: ResolvedSearchProvider;
+	resolvedSearchIntent?: "reference" | "fresh";
+	autoProviderOrder?: ResolvedSearchProvider[];
 }
 
 const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
@@ -66,6 +70,76 @@ function normalizeSearchProvider(value: unknown): SearchProvider {
 export interface FullSearchOptions extends SearchOptions {
 	provider?: SearchProvider;
 	includeContent?: boolean;
+	searchIntent?: SearchIntent;
+}
+
+export function normalizeSearchIntent(value: unknown): SearchIntent {
+	const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+	return normalized === "reference" || normalized === "fresh" ? normalized : "auto";
+}
+
+const FRESH_SIGNALS: readonly string[] = Object.freeze([
+	"news", "breaking", "latest", "today", "tonight", "yesterday",
+	"this week", "this month", "live", "update", "updates",
+	"rumor", "rumors", "leak", "leaked",
+	"announce", "announced", "released", "release date",
+	"tweet", "tweets", "twitter", "x.com", "@",
+]);
+
+const REFERENCE_SIGNALS: readonly string[] = Object.freeze([
+	"docs", "documentation", "api", "reference", "manual",
+	"guide", "tutorial", "spec", "specification", "rfc",
+	"changelog", "pricing", "plans", "pricing page",
+	"homepage", "official site",
+	"github.com", "npm", "pypi", "crates.io", "maven",
+	"how to", "what is", "difference between",
+]);
+
+export function classifyAutoSearchIntent(query: string): "reference" | "fresh" {
+	const haystack = query.toLowerCase();
+
+	for (const token of FRESH_SIGNALS) {
+		if (haystack.includes(token)) return "fresh";
+	}
+
+	// Recent-year signal: any 4-digit year within the last two calendar years.
+	const currentYear = new Date().getFullYear();
+	const yearMatches = haystack.match(/\b(19|20)\d{2}\b/g);
+	if (yearMatches) {
+		for (const raw of yearMatches) {
+			const y = Number(raw);
+			if (y >= currentYear - 1 && y <= currentYear) return "fresh";
+		}
+	}
+
+	for (const token of REFERENCE_SIGNALS) {
+		if (haystack.includes(token)) return "reference";
+	}
+
+	return "reference";
+}
+
+export function getAutoProviderOrder(intent: "reference" | "fresh"): ResolvedSearchProvider[] {
+	return intent === "fresh"
+		? ["perplexity", "gemini", "exa"]
+		: ["exa", "perplexity", "gemini"];
+}
+
+function buildAutoChain(order: ResolvedSearchProvider[]): ResolvedSearchProvider[] {
+	return order.filter((p) => {
+		if (p === "exa") return isExaAvailable();
+		if (p === "perplexity") return isPerplexityAvailable();
+		// Gemini availability (API key or signed-in web session) is probed lazily
+		// inside searchWithGemini; treat it as always eligible to preserve the
+		// existing terminal-fallback behavior.
+		return true;
+	});
+}
+
+function providerLabel(p: ResolvedSearchProvider): string {
+	if (p === "exa") return "Exa";
+	if (p === "perplexity") return "Perplexity";
+	return "Gemini";
 }
 
 function errorMessage(err: unknown): string {
@@ -149,32 +223,42 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 
 	const fallbackErrors: string[] = [];
 
-	if (provider !== "exa" && isExaAvailable()) {
-		try {
-			const result = await searchWithExa(query, options);
-			if (result && "answer" in result) return { ...result, provider: "exa" };
-		} catch (err) {
-			if (isAbortError(err)) throw err;
-			fallbackErrors.push(`Exa: ${errorMessage(err)}`);
-		}
+	let effectiveIntent: "reference" | "fresh" | null = null;
+	let chain: ResolvedSearchProvider[];
+	if (provider === "auto") {
+		effectiveIntent = options.searchIntent === "reference" || options.searchIntent === "fresh"
+			? options.searchIntent
+			: classifyAutoSearchIntent(query);
+		chain = buildAutoChain(getAutoProviderOrder(effectiveIntent));
+	} else {
+		// Explicit `provider: "exa"` fell through (no API key, no result). Use the
+		// historical fallback order but exclude Exa since it was already attempted.
+		chain = buildAutoChain(["perplexity", "gemini"]);
 	}
 
-	if (isPerplexityAvailable()) {
+	const attribution = (p: ResolvedSearchProvider): Partial<AttributedSearchResponse> =>
+		provider === "auto" && effectiveIntent
+			? { provider: p, resolvedSearchIntent: effectiveIntent, autoProviderOrder: chain }
+			: { provider: p };
+
+	for (const p of chain) {
 		try {
-			const result = await searchWithPerplexity(query, options);
-			return { ...result, provider: "perplexity" };
+			if (p === "exa") {
+				const result = await searchWithExa(query, options);
+				if (result && "exhausted" in result) continue; // treat as fallthrough in auto
+				if (result && "answer" in result) return { ...result, ...attribution("exa") } as AttributedSearchResponse;
+				continue;
+			}
+			if (p === "perplexity") {
+				const result = await searchWithPerplexity(query, options);
+				return { ...result, ...attribution("perplexity") } as AttributedSearchResponse;
+			}
+			const geminiResult = await searchWithGemini(query, options, false);
+			if (geminiResult) return { ...geminiResult, ...attribution("gemini") } as AttributedSearchResponse;
 		} catch (err) {
 			if (isAbortError(err)) throw err;
-			fallbackErrors.push(`Perplexity: ${errorMessage(err)}`);
+			fallbackErrors.push(`${providerLabel(p)}: ${errorMessage(err)}`);
 		}
-	}
-
-	try {
-		const geminiResult = await searchWithGemini(query, options, false);
-		if (geminiResult) return { ...geminiResult, provider: "gemini" };
-	} catch (err) {
-		if (isAbortError(err)) throw err;
-		fallbackErrors.push(`Gemini: ${errorMessage(err)}`);
 	}
 
 	if (fallbackErrors.length > 0) {
