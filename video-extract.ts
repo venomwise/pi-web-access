@@ -5,12 +5,12 @@ import { resolve, extname, basename, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { activityMonitor } from "./activity.js";
 import { isGeminiWebAvailable, queryWithCookies } from "./gemini-web.js";
-import { queryGeminiApiWithVideo, getApiKey, API_BASE } from "./gemini-api.js";
+import { buildGeminiApiUrl, buildGeminiFilesUploadUrl, getGeminiApiConfig, queryGeminiApiWithVideo } from "./gemini-api.js";
+import { assertGeminiCapability, isProviderCapabilityError } from "./gemini-capabilities.js";
 import { extractHeadingTitle, type ExtractedContent, type ExtractOptions, type FrameResult } from "./extract.js";
 import { readExecError, trimErrorText, mapFfmpegError } from "./utils.js";
 
 const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
-const UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta";
 
 const DEFAULT_VIDEO_PROMPT = `Extract the complete content of this video. Include:
 1. Video title (infer from content if not explicit), duration
@@ -35,7 +35,7 @@ const VIDEO_EXTENSIONS: Record<string, string> = {
 
 function shouldRethrow(err: unknown): boolean {
 	const message = err instanceof Error ? err.message : String(err);
-	return message.startsWith("Failed to parse ");
+	return message.startsWith("Failed to parse ") || message.startsWith("Invalid geminiApi");
 }
 
 interface VideoFileInfo {
@@ -167,7 +167,16 @@ export async function extractVideo(
 	const displayName = basename(info.absolutePath);
 	const activityId = activityMonitor.logStart({ type: "fetch", url: `video:${displayName}` });
 
-	const result = await tryVideoGeminiApi(info, effectivePrompt, effectiveModel, signal)
+	let apiCapabilityError: string | null = null;
+	let apiResult: ExtractedContent | null = null;
+	try {
+		apiResult = await tryVideoGeminiApi(info, effectivePrompt, effectiveModel, signal);
+	} catch (err) {
+		if (!isProviderCapabilityError(err)) throw err;
+		apiCapabilityError = err.message;
+	}
+
+	const result = apiResult
 		?? await tryVideoGeminiWeb(info, effectivePrompt, effectiveModel, signal);
 
 	if (result) {
@@ -182,6 +191,11 @@ export async function extractVideo(
 	if (signal?.aborted) {
 		activityMonitor.logComplete(activityId, 0);
 		return null;
+	}
+
+	if (apiCapabilityError) {
+		activityMonitor.logError(activityId, apiCapabilityError);
+		return { url: info.absolutePath, title: "", content: "", error: apiCapabilityError };
 	}
 
 	activityMonitor.logError(activityId, "all video extraction paths failed");
@@ -260,8 +274,11 @@ async function tryVideoGeminiApi(
 	model: string,
 	signal?: AbortSignal,
 ): Promise<ExtractedContent | null> {
-	const apiKey = getApiKey();
+	const apiConfig = getGeminiApiConfig();
+	const apiKey = apiConfig.geminiApiKey;
 	if (!apiKey) return null;
+	assertGeminiCapability(apiConfig, "files_api");
+	assertGeminiCapability(apiConfig, "file_uri_media");
 	if (signal?.aborted) return null;
 
 	let fileName: string | null = null;
@@ -285,7 +302,7 @@ async function tryVideoGeminiApi(
 			error: null,
 		};
 	} catch (err) {
-		if (shouldRethrow(err)) throw err;
+		if (shouldRethrow(err) || isProviderCapabilityError(err)) throw err;
 		return null;
 	} finally {
 		if (fileName) deleteGeminiFile(fileName, apiKey);
@@ -299,7 +316,7 @@ async function uploadToFilesApi(
 ): Promise<{ name: string; uri: string }> {
 	const displayName = basename(info.absolutePath);
 
-	const initRes = await fetch(`${UPLOAD_BASE}/files`, {
+	const initRes = await fetch(buildGeminiFilesUploadUrl(), {
 		method: "POST",
 		headers: {
 			"x-goog-api-key": apiKey,
@@ -353,7 +370,7 @@ async function pollFileState(
 	while (Date.now() < deadline) {
 		if (signal?.aborted) throw new Error("Aborted");
 
-		const res = await fetch(`${API_BASE}/${fileName}?key=${apiKey}`, { signal });
+		const res = await fetch(buildGeminiApiUrl(fileName, apiKey), { signal });
 		if (!res.ok) throw new Error(`File state check failed: ${res.status}`);
 
 		const data = await res.json() as { state: string };
@@ -367,7 +384,7 @@ async function pollFileState(
 }
 
 function deleteGeminiFile(fileName: string, apiKey: string): void {
-	fetch(`${API_BASE}/${fileName}?key=${apiKey}`, { method: "DELETE" }).catch((err) => {
+	fetch(buildGeminiApiUrl(fileName, apiKey), { method: "DELETE" }).catch((err) => {
 		const message = err instanceof Error ? err.message : String(err);
 		console.error(`Failed to delete Gemini file ${fileName}: ${message}`);
 	});

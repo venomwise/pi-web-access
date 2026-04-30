@@ -22,7 +22,8 @@ function errorMessage(err: unknown): string {
 }
 
 function isConfigParseError(err: unknown): boolean {
-	return errorMessage(err).startsWith("Failed to parse ");
+	const message = errorMessage(err);
+	return message.startsWith("Failed to parse ") || message.startsWith("Invalid geminiApi");
 }
 
 function isAbortError(err: unknown): boolean {

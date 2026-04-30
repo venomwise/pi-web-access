@@ -34,7 +34,10 @@ Works immediately with no API keys — Exa MCP provides zero-config search. For 
 {
   "exaApiKey": "exa-...",
   "perplexityApiKey": "pplx-...",
-  "geminiApiKey": "AIza..."
+  "geminiApiKey": "AIza...",
+  "geminiApiBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+  "geminiApiProtocol": "gemini",
+  "geminiApiModel": "gemini-3-flash-preview"
 }
 ```
 
@@ -260,6 +263,10 @@ All config lives in `~/.pi/web-search.json`. Every field is optional.
   "exaApiKey": "exa-...",
   "perplexityApiKey": "pplx-...",
   "geminiApiKey": "AIza...",
+  "geminiApiBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+  "geminiApiProtocol": "gemini",
+  "geminiApiModel": "gemini-3-flash-preview",
+  "geminiApiPath": "/models/{model}:generateContent",
   "provider": "exa",
   "chromeProfile": "Profile 2",
   "searchModel": "gemini-2.5-flash",
@@ -288,6 +295,34 @@ All config lives in `~/.pi/web-search.json`. Every field is optional.
 ```
 
 `EXA_API_KEY`, `GEMINI_API_KEY`, and `PERPLEXITY_API_KEY` env vars take precedence over config file values. `provider` sets the default search provider: `"exa"`, `"perplexity"`, or `"gemini"`. This is also updated automatically when you change the provider in the curator UI. `workflow` sets the default curator mode: `"summary-review"` (default, opens curator with auto-generated summary draft) or `"none"` (raw results, no curator). Overridden per-call via the `workflow` parameter on `web_search`, or toggled at runtime with `/curator`. `chromeProfile` overrides the Chromium profile directory used for Gemini Web cookie lookup. `searchModel` overrides the Gemini API model used by `web_search` without changing URL, YouTube, or video extraction defaults. `curatorTimeoutSeconds` controls the initial curator idle timeout (default `20`, max `600`); users can still adjust the timer in the curator UI.
+
+### Gemini API transport
+
+The Gemini API transport fields apply to all Gemini API-backed paths: `web_search` with provider `"gemini"`, Gemini URL Context fallback, YouTube API analysis, and local video file analysis. If you omit them, the defaults preserve the official Google Gemini API behavior:
+
+```json
+{
+  "geminiApiKey": "AIza...",
+  "geminiApiBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+  "geminiApiProtocol": "gemini",
+  "geminiApiModel": "gemini-3-flash-preview"
+}
+```
+
+For an OpenAI-compatible third-party provider, set the protocol and base URL:
+
+```json
+{
+  "geminiApiKey": "sk-...",
+  "geminiApiBaseUrl": "https://provider.example.com/v1",
+  "geminiApiProtocol": "openai",
+  "geminiApiModel": "provider-model-name"
+}
+```
+
+`geminiApiProtocol` supports `"gemini"` and `"openai"`. The `"openai"` protocol uses `chat/completions` and a conservative capability set: Gemini-specific `google_search`, `url_context`, Files API uploads, and video/file media inputs are treated as unavailable unless a future provider-specific capability layer adds support. Search falls back to prompt-only mode with a compatibility note; URL Context returns control to the existing extraction fallback chain; video/file analysis reports an unsupported-capability error if no other fallback succeeds.
+
+`geminiApiPath` is an advanced override for non-standard endpoints. Defaults are `"/models/{model}:generateContent"` for `"gemini"` and `"/chat/completions"` for `"openai"`. Most users should leave it unset.
 
 ### Shortcuts
 

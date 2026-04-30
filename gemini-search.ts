@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { activityMonitor } from "./activity.js";
-import { getApiKey, API_BASE, DEFAULT_MODEL } from "./gemini-api.js";
+import { generateText, generateWithTools, getGeminiApiConfig } from "./gemini-api.js";
+import { supportsGoogleSearchTool } from "./gemini-capabilities.js";
 import { isGeminiWebAvailable, queryWithCookies } from "./gemini-web.js";
 import { isPerplexityAvailable, searchWithPerplexity, type SearchResult, type SearchResponse, type SearchOptions } from "./perplexity.js";
 import { hasExaApiKey, isExaAvailable, searchWithExa } from "./exa.js";
@@ -190,44 +191,40 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 }
 
 async function searchWithGeminiApi(query: string, options: SearchOptions = {}): Promise<SearchResponse | null> {
-	const apiKey = getApiKey();
-	if (!apiKey) return null;
+	const config = getGeminiApiConfig();
+	if (!config.geminiApiKey) return null;
 
 	const activityId = activityMonitor.logStart({ type: "api", query });
 
 	try {
-		const model = getSearchConfig().searchModel ?? DEFAULT_MODEL;
-		const body = {
-			contents: [{ parts: [{ text: query }] }],
-			tools: [{ google_search: {} }],
-		};
+		const model = getSearchConfig().searchModel ?? config.geminiApiModel;
+		if (supportsGoogleSearchTool(config)) {
+			const result = await generateWithTools<GeminiSearchResponse>(
+				query,
+				[{ google_search: {} }],
+				{ model, signal: options.signal, timeoutMs: 60000 },
+			);
+			activityMonitor.logComplete(activityId, result.status);
 
-		const res = await fetch(`${API_BASE}/models/${model}:generateContent?key=${apiKey}`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-			signal: AbortSignal.any([
-				AbortSignal.timeout(60000),
-				...(options.signal ? [options.signal] : []),
-			]),
-		});
-
-		if (!res.ok) {
-			const errorText = await res.text();
-			throw new Error(`Gemini API error ${res.status}: ${errorText.slice(0, 300)}`);
+			const metadata = result.raw.candidates?.[0]?.groundingMetadata;
+			const results = await resolveGroundingChunks(metadata?.groundingChunks, options.signal);
+			if (!result.text && results.length === 0) return null;
+			return { answer: result.text, results };
 		}
 
-		const data = await res.json() as GeminiSearchResponse;
-		activityMonitor.logComplete(activityId, res.status);
+		const result = await generateText(buildSearchPrompt(query, options), {
+			model,
+			signal: options.signal,
+			timeoutMs: 60000,
+		});
+		activityMonitor.logComplete(activityId, result.status);
 
-		const answer = data.candidates?.[0]?.content?.parts
-			?.map(p => p.text).filter(Boolean).join("\n") ?? "";
-
-		const metadata = data.candidates?.[0]?.groundingMetadata;
-		const results = await resolveGroundingChunks(metadata?.groundingChunks, options.signal);
-
+		const answer = result.text.trim();
+		const results = extractSourceUrls(answer);
 		if (!answer && results.length === 0) return null;
-		return { answer, results };
+		const compatibilityNote =
+			"_Native Gemini search tooling was unavailable for the configured provider; this answer used prompt-only mode, so citation quality may be reduced._";
+		return { answer: `${answer}\n\n${compatibilityNote}`, results };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		if (message.toLowerCase().includes("abort")) {

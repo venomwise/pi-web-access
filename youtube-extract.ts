@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { activityMonitor } from "./activity.js";
 import { isGeminiWebAvailable, queryWithCookies } from "./gemini-web.js";
 import { isGeminiApiAvailable, queryGeminiApiWithVideo } from "./gemini-api.js";
+import { isProviderCapabilityError } from "./gemini-capabilities.js";
 import { searchWithPerplexity } from "./perplexity.js";
 import { extractHeadingTitle, type ExtractedContent, type FrameResult, type VideoFrame } from "./extract.js";
 import { formatSeconds, readExecError, isTimeoutError, trimErrorText, mapFfmpegError } from "./utils.js";
@@ -24,7 +25,7 @@ const YOUTUBE_REGEX =
 
 function shouldRethrow(err: unknown): boolean {
 	const message = err instanceof Error ? err.message : String(err);
-	return message.startsWith("Failed to parse ");
+	return message.startsWith("Failed to parse ") || message.startsWith("Invalid geminiApi");
 }
 
 interface YouTubeConfig {
@@ -103,9 +104,21 @@ export async function extractYouTube(
 
 	const activityId = activityMonitor.logStart({ type: "fetch", url: `youtube.com/${videoId ?? "video"}` });
 
-	const result = await tryGeminiWeb(canonicalUrl, effectivePrompt, effectiveModel, signal)
-		?? await tryGeminiApi(canonicalUrl, effectivePrompt, effectiveModel, signal)
-		?? await tryPerplexity(url, effectivePrompt, signal);
+	const webResult = await tryGeminiWeb(canonicalUrl, effectivePrompt, effectiveModel, signal);
+	let apiCapabilityError: string | null = null;
+	let apiResult: ExtractedContent | null = null;
+	if (!webResult) {
+		try {
+			apiResult = await tryGeminiApi(canonicalUrl, effectivePrompt, effectiveModel, signal);
+		} catch (err) {
+			if (!isProviderCapabilityError(err)) throw err;
+			apiCapabilityError = err.message;
+		}
+	}
+	const perplexityResult = webResult || apiResult
+		? null
+		: await tryPerplexity(url, effectivePrompt, signal);
+	const result = webResult ?? apiResult ?? perplexityResult;
 
 	if (result) {
 		result.url = url;
@@ -120,6 +133,11 @@ export async function extractYouTube(
 	if (signal?.aborted) {
 		activityMonitor.logComplete(activityId, 0);
 		return null;
+	}
+
+	if (apiCapabilityError) {
+		activityMonitor.logError(activityId, apiCapabilityError);
+		return { url, title: "", content: "", error: apiCapabilityError };
 	}
 
 	activityMonitor.logError(activityId, "all extraction paths failed");
@@ -240,7 +258,7 @@ async function tryGeminiWeb(
 			error: null,
 		};
 	} catch (err) {
-		if (shouldRethrow(err)) throw err;
+		if (shouldRethrow(err) || isProviderCapabilityError(err)) throw err;
 		return null;
 	}
 }
@@ -269,7 +287,7 @@ async function tryGeminiApi(
 			error: null,
 		};
 	} catch (err) {
-		if (shouldRethrow(err)) throw err;
+		if (shouldRethrow(err) || isProviderCapabilityError(err)) throw err;
 		return null;
 	}
 }
