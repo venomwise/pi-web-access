@@ -4,7 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { StringEnum, complete, getModel, type Model } from "@mariozechner/pi-ai";
 import { fetchAllContent, type ExtractedContent } from "./extract.js";
 import { clearCloneCache } from "./github-extract.js";
-import { search, type SearchProvider, type ResolvedSearchProvider } from "./gemini-search.js";
+import { search, type SearchProvider, type ResolvedSearchProvider, type SearchIntent, normalizeSearchIntent } from "./gemini-search.js";
 import { executeCodeSearch } from "./code-search.js";
 import type { SearchResult } from "./perplexity.js";
 import { formatSeconds } from "./utils.js";
@@ -534,6 +534,8 @@ export default function (pi: ExtensionAPI) {
 		workflow?: CuratorWorkflow;
 		approvedSummary?: string;
 		summaryMeta?: SummaryMeta;
+		resolvedSearchIntent?: "reference" | "fresh";
+		autoProviderOrder?: ResolvedSearchProvider[];
 	}
 
 	function normalizeSummaryMeta(meta: SummaryMeta | undefined, summaryText: string): SummaryMeta {
@@ -806,6 +808,8 @@ export default function (pi: ExtensionAPI) {
 						},
 					}
 					: {}),
+				...(opts.resolvedSearchIntent ? { resolvedSearchIntent: opts.resolvedSearchIntent } : {}),
+				...(opts.autoProviderOrder ? { autoProviderOrder: opts.autoProviderOrder } : {}),
 			},
 		};
 	}
@@ -1079,7 +1083,7 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			`Search the web using Perplexity AI, Exa, or Gemini. Returns an AI-synthesized answer with source citations. For comprehensive research, prefer queries (plural) with 2-4 varied angles over a single query — each query gets its own synthesized answer, so varying phrasing and scope gives much broader coverage. When includeContent is true, full page content is fetched in the background. Searches auto-open the interactive browser curator and stream results live; set workflow to "none" to skip curation. Provider auto-selects: Exa (direct API with key, MCP fallback without), else Perplexity (needs key), else Gemini API (needs key), else Gemini Web (needs a supported Chromium-based browser login).`,
+			`Search the web using Perplexity AI, Exa, or Gemini. Returns an AI-synthesized answer with source citations. For comprehensive research, prefer queries (plural) with 2-4 varied angles over a single query — each query gets its own synthesized answer, so varying phrasing and scope gives much broader coverage. When includeContent is true, full page content is fetched in the background. Searches auto-open the interactive browser curator and stream results live; set workflow to "none" to skip curation. Provider auto-selects: Exa (direct API with key, MCP fallback without), else Perplexity (needs key), else Gemini API (needs key), else Gemini Web (needs a supported Chromium-based browser login). Set searchIntent to "reference" or "fresh" to bias auto ordering (only when workflow is "none" and no explicit provider).`,
 		promptSnippet:
 			"Use for web research questions. Prefer {queries:[...]} with 2-4 varied angles over a single query for broader coverage.",
 		parameters: Type.Object({
@@ -1097,6 +1101,11 @@ export default function (pi: ExtensionAPI) {
 			workflow: Type.Optional(
 				StringEnum(["none", "summary-review"], {
 					description: "Search workflow mode: none = no curator, summary-review = open curator with auto summary draft (default)",
+				}),
+			),
+			searchIntent: Type.Optional(
+				StringEnum(["auto", "reference", "fresh"], {
+					description: "Hints provider ordering in auto mode: 'reference' favors Exa for docs/canonical pages; 'fresh' favors Perplexity then Gemini for breaking news; 'auto' (default) uses a local heuristic. Only applies when provider resolves to 'auto' with workflow 'none'; ignored for explicit providers and curator workflows.",
 				}),
 			),
 		}),
@@ -1256,6 +1265,9 @@ export default function (pi: ExtensionAPI) {
 			const allUrls: string[] = [];
 			const allInlineContent: ExtractedContent[] = [];
 			const resolvedProvider = normalizeProviderInput(params.provider ?? loadConfig().provider);
+			const effectiveSearchIntent = normalizeSearchIntent(params.searchIntent);
+			let observedResolvedIntent: "reference" | "fresh" | undefined;
+			let observedAutoProviderOrder: ResolvedSearchProvider[] | undefined;
 
 			for (let i = 0; i < queryList.length; i++) {
 				const query = queryList[i];
@@ -1266,14 +1278,25 @@ export default function (pi: ExtensionAPI) {
 				});
 
 				try {
-					const { answer, results, inlineContent, provider } = await search(query, {
+					const response = await search(query, {
 						provider: resolvedProvider,
 						numResults: params.numResults,
 						recencyFilter: params.recencyFilter,
 						domainFilter: params.domainFilter,
 						includeContent: params.includeContent,
 						signal,
+						searchIntent: effectiveSearchIntent,
 					});
+					const { answer, results, inlineContent, provider } = response;
+
+					if (resolvedProvider === "auto") {
+						if (observedResolvedIntent === undefined && response.resolvedSearchIntent) {
+							observedResolvedIntent = response.resolvedSearchIntent;
+						}
+						if (observedAutoProviderOrder === undefined && response.autoProviderOrder) {
+							observedAutoProviderOrder = response.autoProviderOrder;
+						}
+					}
 
 					searchResults.push({ query, answer, results, error: null, provider });
 					for (const r of results) {
@@ -1297,6 +1320,8 @@ export default function (pi: ExtensionAPI) {
 				urls: allUrls,
 				includeContent: params.includeContent ?? false,
 				inlineContent: allInlineContent.length > 0 ? allInlineContent : undefined,
+				resolvedSearchIntent: resolvedProvider === "auto" ? observedResolvedIntent : undefined,
+				autoProviderOrder: resolvedProvider === "auto" ? observedAutoProviderOrder : undefined,
 			});
 		},
 
