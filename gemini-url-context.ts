@@ -1,5 +1,6 @@
 import { activityMonitor } from "./activity.js";
-import { getApiKey, API_BASE, DEFAULT_MODEL } from "./gemini-api.js";
+import { generateWithTools, getGeminiApiConfig } from "./gemini-api.js";
+import { supportsUrlContextTool } from "./gemini-capabilities.js";
 import { isGeminiWebAvailable, queryWithCookies } from "./gemini-web.js";
 import { extractHeadingTitle, type ExtractedContent } from "./extract.js";
 
@@ -11,44 +12,28 @@ URL: `;
 
 function shouldRethrow(err: unknown): boolean {
 	const message = err instanceof Error ? err.message : String(err);
-	return message.startsWith("Failed to parse ");
+	return message.startsWith("Failed to parse ") || message.startsWith("Invalid geminiApi");
 }
 
 export async function extractWithUrlContext(
 	url: string,
 	signal?: AbortSignal,
 ): Promise<ExtractedContent | null> {
-	const apiKey = getApiKey();
-	if (!apiKey) return null;
+	const config = getGeminiApiConfig();
+	if (!config.geminiApiKey) return null;
+	if (!supportsUrlContextTool(config)) return null;
 
 	const activityId = activityMonitor.logStart({ type: "api", query: `url_context: ${url}` });
 
 	try {
-		const model = DEFAULT_MODEL;
-		const body = {
-			contents: [{ parts: [{ text: EXTRACTION_PROMPT + url }] }],
-			tools: [{ url_context: {} }],
-		};
+		const result = await generateWithTools<UrlContextResponse>(
+			EXTRACTION_PROMPT + url,
+			[{ url_context: {} }],
+			{ signal, timeoutMs: 60000 },
+		);
+		activityMonitor.logComplete(activityId, result.status);
 
-		const res = await fetch(`${API_BASE}/models/${model}:generateContent?key=${apiKey}`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-			signal: AbortSignal.any([
-				AbortSignal.timeout(60000),
-				...(signal ? [signal] : []),
-			]),
-		});
-
-		if (!res.ok) {
-			activityMonitor.logComplete(activityId, res.status);
-			return null;
-		}
-
-		const data = await res.json() as UrlContextResponse;
-		activityMonitor.logComplete(activityId, res.status);
-
-		const metadata = data.candidates?.[0]?.url_context_metadata;
+		const metadata = result.raw.candidates?.[0]?.url_context_metadata;
 		if (metadata?.url_metadata?.length) {
 			const status = metadata.url_metadata[0].url_retrieval_status;
 			if (status === "URL_RETRIEVAL_STATUS_UNSAFE" || status === "URL_RETRIEVAL_STATUS_ERROR") {
@@ -56,8 +41,7 @@ export async function extractWithUrlContext(
 			}
 		}
 
-		const content = data.candidates?.[0]?.content?.parts
-			?.map(p => p.text).filter(Boolean).join("\n") ?? "";
+		const content = result.text;
 
 		if (!content || content.length < 50) return null;
 
