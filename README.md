@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/cac6a17a-1eeb-4dde-9818-cdf85d8ea98f
 
 **Video Understanding** — Point it at a YouTube video or local screen recording and ask questions about what's on screen. Full transcripts, visual descriptions, and frame extraction at exact timestamps.
 
-**Smart Fallbacks** — Every capability has a fallback chain. Search tries Exa, then Perplexity, then Gemini API, then Gemini Web. YouTube tries Gemini Web, then API, then Perplexity. Blocked pages retry through Jina Reader and Gemini extraction. Something always works.
+**Smart Fallbacks** — Every capability has a fallback chain. Search tries Exa, then Perplexity, then Grok, then Gemini API, then Gemini Web. YouTube tries Gemini Web, then API, then Perplexity. Blocked pages retry through Jina Reader and Gemini extraction. Something always works.
 
 **GitHub Cloning** — GitHub URLs are cloned locally instead of scraped. The agent gets real file contents and a local path to explore, not rendered HTML.
 
@@ -34,6 +34,7 @@ Works immediately with no API keys — Exa MCP provides zero-config search. For 
 {
   "exaApiKey": "exa-...",
   "perplexityApiKey": "pplx-...",
+  "grokApiKey": "xai-...",
   "geminiApiKey": "AIza...",
   "geminiApiBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
   "geminiApiProtocol": "gemini",
@@ -41,7 +42,7 @@ Works immediately with no API keys — Exa MCP provides zero-config search. For 
 }
 ```
 
-In `auto` mode (default), `web_search` tries Exa first (direct API if keyed, MCP if not), then Perplexity, then Gemini API, then Gemini Web.
+In `auto` mode (default), `web_search` tries Exa first (direct API if keyed, MCP if not), then Perplexity, then Grok, then Gemini API, then Gemini Web.
 
 Optional dependencies for video frame extraction:
 
@@ -77,7 +78,7 @@ fetch_content({ url: "/path/to/recording.mp4", prompt: "What error appears on sc
 
 ### web_search
 
-Search the web via Exa, Perplexity AI, or Gemini. Returns a synthesized answer with source citations.
+Search the web via Exa, Perplexity AI, Grok (xAI), or Gemini. Returns a synthesized answer with source citations.
 
 ```typescript
 web_search({ query: "rust async programming" })
@@ -96,7 +97,7 @@ web_search({ queries: ["query 1", "query 2"], workflow: "summary-review" })
 | `numResults` | Results per query (default: 5, max: 20) |
 | `recencyFilter` | `day`, `week`, `month`, or `year` |
 | `domainFilter` | Limit to domains (prefix with `-` to exclude) |
-| `provider` | `auto` (default), `exa`, `perplexity`, or `gemini` |
+| `provider` | `auto` (default), `exa`, `perplexity`, `grok`, or `gemini` |
 | `includeContent` | Fetch full page content from sources in background |
 | `workflow` | `none` (skip curator) or `summary-review` (auto-generate summary draft after search completion, default) |
 
@@ -191,7 +192,7 @@ When Readability fails or returns only a cookie notice, the extension retries vi
 
 ```
 web_search(query)
-  → Exa (direct API with key, MCP without) → Perplexity → Gemini API → Gemini Web
+  → Exa (direct API with key, MCP without) → Perplexity → Grok → Gemini API → Gemini Web
 
 fetch_content(url)
   → Video file?  Gemini API (Files API) → Gemini Web
@@ -262,6 +263,9 @@ All config lives in `~/.pi/web-search.json`. Every field is optional.
 {
   "exaApiKey": "exa-...",
   "perplexityApiKey": "pplx-...",
+  "grokApiKey": "xai-...",
+  "grokApiModel": "grok-3-mini",
+  "grokApiBaseUrl": "https://api.x.ai/v1",
   "geminiApiKey": "AIza...",
   "geminiApiBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
   "geminiApiProtocol": "gemini",
@@ -294,7 +298,7 @@ All config lives in `~/.pi/web-search.json`. Every field is optional.
 }
 ```
 
-`EXA_API_KEY`, `GEMINI_API_KEY`, and `PERPLEXITY_API_KEY` env vars take precedence over config file values. `provider` sets the default search provider: `"exa"`, `"perplexity"`, or `"gemini"`. This is also updated automatically when you change the provider in the curator UI. `workflow` sets the default curator mode: `"summary-review"` (default, opens curator with auto-generated summary draft) or `"none"` (raw results, no curator). Overridden per-call via the `workflow` parameter on `web_search`, or toggled at runtime with `/curator`. `chromeProfile` overrides the Chromium profile directory used for Gemini Web cookie lookup. `searchModel` overrides the Gemini API model used by `web_search` without changing URL, YouTube, or video extraction defaults. `curatorTimeoutSeconds` controls the initial curator idle timeout (default `20`, max `600`); users can still adjust the timer in the curator UI.
+`EXA_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, `XAI_API_KEY`, and `GROK_API_KEY` env vars take precedence over config file values (`XAI_API_KEY` wins over `GROK_API_KEY` for Grok). `provider` sets the default search provider: `"exa"`, `"perplexity"`, `"grok"`, or `"gemini"`. This is also updated automatically when you change the provider in the curator UI. `workflow` sets the default curator mode: `"summary-review"` (default, opens curator with auto-generated summary draft) or `"none"` (raw results, no curator). Overridden per-call via the `workflow` parameter on `web_search`, or toggled at runtime with `/curator`. `chromeProfile` overrides the Chromium profile directory used for Gemini Web cookie lookup. `searchModel` overrides the Gemini API model used by `web_search` without changing URL, YouTube, or video extraction defaults. `curatorTimeoutSeconds` controls the initial curator idle timeout (default `20`, max `600`); users can still adjust the timer in the curator UI.
 
 ### Gemini API transport
 
@@ -323,6 +327,18 @@ For an OpenAI-compatible third-party provider, set the protocol and base URL:
 `geminiApiProtocol` supports `"gemini"` and `"openai"`. The `"openai"` protocol uses `chat/completions` and a conservative capability set: Gemini-specific `google_search`, `url_context`, Files API uploads, and video/file media inputs are treated as unavailable unless a future provider-specific capability layer adds support. Search falls back to prompt-only mode with a compatibility note; URL Context returns control to the existing extraction fallback chain; video/file analysis reports an unsupported-capability error if no other fallback succeeds.
 
 `geminiApiPath` is an advanced override for non-standard endpoints. Defaults are `"/models/{model}:generateContent"` for `"gemini"` and `"/chat/completions"` for `"openai"`. Most users should leave it unset.
+
+### Grok Live Search
+
+Grok provider uses xAI's `/v1/chat/completions` endpoint with the native `search_parameters` Live Search extension. `recencyFilter` / `domainFilter` / `numResults` are translated to hard server-side parameters instead of prompt hints, and citations come from the native `citations` array in the response:
+
+- `numResults` → `search_parameters.max_search_results` (default 15 when unset).
+- `recencyFilter` → `search_parameters.from_date` (`day` = today − 1d, `week` = 7d, `month` = 30d, `year` = 365d, `YYYY-MM-DD`).
+- `domainFilter` → `search_parameters.sources[0].allowed_websites` / `excluded_websites` (entries prefixed with `-` are excluded).
+- Default `sources` are `[{ type: "web", ... }, { type: "news" }]`; X (Twitter) sources are not exposed as a `web_search` input in this release.
+- `search_parameters.mode` is pinned to `"on"` and `return_citations` to `true`; results are built directly from the response's native `citations`, with graceful fallbacks to parsed JSON sources or `extractSourceUrls` when Live Search is unavailable.
+
+Key precedence for Grok is `XAI_API_KEY` (official env var) → `GROK_API_KEY` (alias) → `grokApiKey` in `~/.pi/web-search.json`. Environment variables always win over the config file. `grokApiModel` defaults to `grok-3-mini` and `grokApiBaseUrl` defaults to `https://api.x.ai/v1`; override them to pin a specific Grok model or point at an OpenAI-compatible proxy endpoint.
 
 ### Shortcuts
 
@@ -364,7 +380,7 @@ Rate limits: Perplexity is capped at 10 requests/minute (client-side). Content f
 | `exa.ts` | Exa.ai search provider — direct API and MCP proxy, budget tracking |
 | `code-search.ts` | Code/docs search via Exa MCP |
 | `extract.ts` | URL/file path routing, HTTP extraction, fallback orchestration |
-| `gemini-search.ts` | Search routing across Exa, Perplexity, Gemini API, Gemini Web |
+| `gemini-search.ts` | Search routing across Exa, Perplexity, Grok, Gemini API, Gemini Web |
 | `gemini-url-context.ts` | Gemini URL Context + Web extraction fallbacks |
 | `gemini-web.ts` | Gemini Web client (cookie auth, StreamGenerate) |
 | `gemini-api.ts` | Gemini REST API client (generateContent) |
@@ -374,6 +390,7 @@ Rate limits: Perplexity is capped at 10 requests/minute (client-side). Content f
 | `github-extract.ts` | GitHub URL parsing, clone cache, content generation |
 | `github-api.ts` | GitHub API fallback for large repos and commit SHAs |
 | `perplexity.ts` | Perplexity API client with rate limiting |
+| `grok.ts` | Grok (xAI) search provider with native Live Search parameters and citations |
 | `pdf-extract.ts` | PDF text extraction, saves to markdown |
 | `rsc-extract.ts` | RSC flight data parser for Next.js pages |
 | `utils.ts` | Shared formatting and error helpers |

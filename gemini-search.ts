@@ -7,8 +7,9 @@ import { supportsGoogleSearchTool } from "./gemini-capabilities.js";
 import { isGeminiWebAvailable, queryWithCookies } from "./gemini-web.js";
 import { isPerplexityAvailable, searchWithPerplexity, type SearchResult, type SearchResponse, type SearchOptions } from "./perplexity.js";
 import { hasExaApiKey, isExaAvailable, searchWithExa } from "./exa.js";
+import { isGrokAvailable, searchWithGrok } from "./grok.js";
 
-export type SearchProvider = "auto" | "perplexity" | "gemini" | "exa";
+export type SearchProvider = "auto" | "perplexity" | "gemini" | "exa" | "grok";
 export type ResolvedSearchProvider = Exclude<SearchProvider, "auto">;
 
 export interface AttributedSearchResponse extends SearchResponse {
@@ -58,7 +59,7 @@ function normalizeSearchModel(value: unknown): string | undefined {
 
 function normalizeSearchProvider(value: unknown): SearchProvider {
 	const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-	return normalized === "auto" || normalized === "perplexity" || normalized === "gemini" || normalized === "exa"
+	return normalized === "auto" || normalized === "perplexity" || normalized === "gemini" || normalized === "exa" || normalized === "grok"
 		? normalized
 		: "auto";
 }
@@ -147,6 +148,11 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 		}
 	}
 
+	if (provider === "grok") {
+		const result = await searchWithGrok(query, options);
+		return { ...result, provider: "grok" };
+	}
+
 	const fallbackErrors: string[] = [];
 
 	if (provider !== "exa" && isExaAvailable()) {
@@ -169,6 +175,16 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 		}
 	}
 
+	if (provider !== "grok" && isGrokAvailable()) {
+		try {
+			const result = await searchWithGrok(query, options);
+			return { ...result, provider: "grok" };
+		} catch (err) {
+			if (isAbortError(err)) throw err;
+			fallbackErrors.push(`Grok: ${errorMessage(err)}`);
+		}
+	}
+
 	try {
 		const geminiResult = await searchWithGemini(query, options, false);
 		if (geminiResult) return { ...geminiResult, provider: "gemini" };
@@ -185,8 +201,9 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 		"No search provider available. Either:\n" +
 		"  1. Set perplexityApiKey in ~/.pi/web-search.json\n" +
 		"  2. Set EXA_API_KEY (or exaApiKey) in ~/.pi/web-search.json\n" +
-		"  3. Set GEMINI_API_KEY in ~/.pi/web-search.json\n" +
-		"  4. Sign into gemini.google.com in a supported Chromium-based browser"
+		"  3. Set grokApiKey (or XAI_API_KEY / GROK_API_KEY) in ~/.pi/web-search.json\n" +
+		"  4. Set GEMINI_API_KEY in ~/.pi/web-search.json\n" +
+		"  5. Sign into gemini.google.com in a supported Chromium-based browser"
 	);
 }
 
@@ -288,7 +305,7 @@ function buildSearchPrompt(query: string, options: SearchOptions): string {
 	return prompt;
 }
 
-function extractSourceUrls(markdown: string): SearchResult[] {
+export function extractSourceUrls(markdown: string): SearchResult[] {
 	const results: SearchResult[] = [];
 	const seen = new Set<string>();
 	const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
