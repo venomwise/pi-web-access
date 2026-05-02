@@ -35,6 +35,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { isPerplexityAvailable } from "./perplexity.js";
 import { isExaAvailable } from "./exa.js";
+import { isGrokAvailable } from "./grok.js";
 import { isGeminiApiAvailable } from "./gemini-api.js";
 import { getActiveGoogleEmail, isGeminiWebAvailable } from "./gemini-web.js";
 
@@ -53,6 +54,7 @@ interface WebSearchConfig {
 interface ProviderAvailability {
 	perplexity: boolean;
 	exa: boolean;
+	grok: boolean;
 	gemini: boolean;
 }
 
@@ -112,7 +114,7 @@ function normalizeProviderInput(value: unknown): SearchProvider | undefined {
 	if (value === undefined) return undefined;
 	if (typeof value !== "string") return "auto";
 	const normalized = value.trim().toLowerCase();
-	if (normalized === "auto" || normalized === "exa" || normalized === "perplexity" || normalized === "gemini") {
+	if (normalized === "auto" || normalized === "exa" || normalized === "perplexity" || normalized === "grok" || normalized === "gemini") {
 		return normalized;
 	}
 	return "auto";
@@ -151,6 +153,7 @@ async function getProviderAvailability(): Promise<ProviderAvailability> {
 	return {
 		perplexity: isPerplexityAvailable(),
 		exa: isExaAvailable(),
+		grok: isGrokAvailable(),
 		gemini: isGeminiApiAvailable() || !!geminiWebAvail,
 	};
 }
@@ -173,20 +176,29 @@ function resolveProvider(
 	if (provider === "auto") {
 		if (available.exa) return "exa";
 		if (available.perplexity) return "perplexity";
+		if (available.grok) return "grok";
 		if (available.gemini) return "gemini";
 		return "exa";
 	}
 	if (provider === "exa" && !available.exa) {
 		if (available.perplexity) return "perplexity";
+		if (available.grok) return "grok";
 		return available.gemini ? "gemini" : "exa";
 	}
 	if (provider === "perplexity" && !available.perplexity) {
 		if (available.exa) return "exa";
+		if (available.grok) return "grok";
 		return available.gemini ? "gemini" : "perplexity";
+	}
+	if (provider === "grok" && !available.grok) {
+		if (available.exa) return "exa";
+		if (available.perplexity) return "perplexity";
+		return available.gemini ? "gemini" : "grok";
 	}
 	if (provider === "gemini" && !available.gemini) {
 		if (available.exa) return "exa";
-		return available.perplexity ? "perplexity" : "gemini";
+		if (available.perplexity) return "perplexity";
+		return available.grok ? "grok" : "gemini";
 	}
 	return provider;
 }
@@ -1083,9 +1095,9 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			`Search the web using Perplexity AI, Exa, or Gemini. Returns an AI-synthesized answer with source citations. For comprehensive research, prefer queries (plural) with 2-4 varied angles over a single query — each query gets its own synthesized answer, so varying phrasing and scope gives much broader coverage. When includeContent is true, full page content is fetched in the background. Searches auto-open the interactive browser curator and stream results live; set workflow to "none" to skip curation. Provider auto-selects: Exa (direct API with key, MCP fallback without), else Perplexity (needs key), else Gemini API (needs key), else Gemini Web (needs a supported Chromium-based browser login). Set searchIntent to "reference" or "fresh" to bias auto ordering (only when workflow is "none" and no explicit provider).`,
+			`Search the live web using Perplexity AI, Exa, Grok (xAI), or Gemini. Use this tool for any request that needs current, recent, latest, breaking, news, releases, changelogs, version announcements, market/company updates, or source citations beyond the model's knowledge cutoff. Returns an AI-synthesized answer with source citations. For comprehensive research, prefer queries (plural) with 2-4 varied angles over a single query — each query gets its own synthesized answer, so varying phrasing and scope gives much broader coverage. For time-bounded questions such as "today", "this week", "last week", or "recent", set recencyFilter appropriately (day/week/month/year). When includeContent is true, full page content is fetched in the background. Searches auto-open the interactive browser curator and stream results live; set workflow to "none" to skip curation. Provider auto-selects: Exa (direct API with key, MCP fallback without), else Perplexity (needs key), else Grok (needs xAI key), else Gemini API (needs key), else Gemini Web (needs a supported Chromium-based browser login).`,
 		promptSnippet:
-			"Use for web research questions. Prefer {queries:[...]} with 2-4 varied angles over a single query for broader coverage.",
+			"Use web_search for current/recent/latest information, news, releases, changelogs, time-bounded questions (today/this week/last week), or when the user asks for sources/citations. For research, prefer {queries:[...]} with 2-4 varied angles and set recencyFilter when relevant.",
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Single search query. For research tasks, prefer 'queries' with multiple varied angles instead." })),
 			queries: Type.Optional(Type.Array(Type.String(), { description: "Multiple queries searched in sequence, each returning its own synthesized answer. Prefer this for research — vary phrasing, scope, and angle across 2-4 queries to maximize coverage. Good: ['React vs Vue performance benchmarks 2026', 'React vs Vue developer experience comparison', 'React ecosystem size vs Vue ecosystem']. Bad: ['React vs Vue', 'React vs Vue comparison', 'React vs Vue review'] (too similar, redundant results)." })),
@@ -1096,7 +1108,7 @@ export default function (pi: ExtensionAPI) {
 			),
 			domainFilter: Type.Optional(Type.Array(Type.String(), { description: "Limit to domains (prefix with - to exclude)" })),
 			provider: Type.Optional(
-				StringEnum(["auto", "perplexity", "gemini", "exa"], { description: "Search provider (default: auto)" }),
+				StringEnum(["auto", "exa", "perplexity", "grok", "gemini"], { description: "Search provider (default: auto). Auto falls back Exa → Perplexity → Grok → Gemini API → Gemini Web." }),
 			),
 			workflow: Type.Optional(
 				StringEnum(["none", "summary-review"], {
