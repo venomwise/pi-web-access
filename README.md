@@ -1,18 +1,31 @@
 <p>
-  <img src="banner.png" alt="pi-web-access" width="1100">
+  <img src="banner.png" alt="pi-web-access-enhanced" width="1100">
 </p>
 
-# Pi Web Access
+# Pi Web Access Enhanced
 
-**Web search, content extraction, and video understanding for Pi agent. Zero config with a supported Chromium-based browser, or bring your own API keys.**
+**Personal enhanced fork of Pi Web Access: web search, content extraction, and video understanding for Pi agent. Zero config with a supported Chromium-based browser, or bring your own API keys.**
 
-[![npm version](https://img.shields.io/npm/v/pi-web-access?style=for-the-badge)](https://www.npmjs.com/package/pi-web-access)
+This package is published as `@venomzen/pi-web-access-enhanced` and maintained by venomzen. It is based on the original [`pi-web-access`](https://www.npmjs.com/package/pi-web-access) package by Nico Bailon, with personal enhancements and behavior changes.
+
+[![npm version](https://img.shields.io/npm/v/%40venomzen%2Fpi-web-access-enhanced?style=for-the-badge)](https://www.npmjs.com/package/@venomzen/pi-web-access-enhanced)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows*-blue?style=for-the-badge)]()
 
 https://github.com/user-attachments/assets/cac6a17a-1eeb-4dde-9818-cdf85d8ea98f
 
-## Why Pi Web Access
+## About This Fork
+
+This fork keeps the original Pi tool names for compatibility:
+
+- `web_search`
+- `fetch_content`
+- `get_search_content`
+- `code_search`
+
+Because of that, do not enable this package and the original `pi-web-access` package at the same time in the same Pi environment.
+
+## Why Pi Web Access Enhanced
 
 **Zero Config** — Works out of the box with Exa MCP (no API key needed). Or sign into Google in Chrome, Arc, Helium, or Chromium for Gemini Web. Add API keys for Exa, Perplexity, or Gemini API for more control.
 
@@ -25,10 +38,14 @@ https://github.com/user-attachments/assets/cac6a17a-1eeb-4dde-9818-cdf85d8ea98f
 ## Install
 
 ```bash
-pi install npm:pi-web-access
+pi install npm:@venomzen/pi-web-access-enhanced
 ```
 
-Works immediately with no API keys — Exa MCP provides zero-config search. For more providers or direct API access, add keys to `~/.pi/web-search.json`:
+Works immediately with no API keys — Exa MCP provides zero-config search.
+
+If you already have the original `pi-web-access` installed, disable or remove it before enabling this enhanced fork.
+
+For more providers or direct API access, add keys to `~/.pi/web-search.json`:
 
 ```json
 {
@@ -50,6 +67,32 @@ brew install yt-dlp   # YouTube stream URLs for frame extraction
 Without these, video content analysis (transcripts, visual descriptions via Gemini) still works. The binaries are only needed for extracting individual frames as images.
 
 Requires Pi v0.37.3+.
+
+## Uninstall
+
+Remove the globally installed package:
+
+```bash
+pi remove npm:@venomzen/pi-web-access-enhanced
+```
+
+`pi uninstall` is also supported as an alias:
+
+```bash
+pi uninstall npm:@venomzen/pi-web-access-enhanced
+```
+
+If you installed it project-locally with `pi install -l`, remove it from the project settings with `-l` as well:
+
+```bash
+pi remove npm:@venomzen/pi-web-access-enhanced -l
+```
+
+Optional: remove local configuration if you no longer need the provider keys or curator settings:
+
+```bash
+rm ~/.pi/web-search.json
+```
 
 ## Quick Start
 

@@ -1,7 +1,7 @@
 {
-  "name": "pi-web-access",
-  "version": "0.10.6",
-  "description": "Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent",
+  "name": "@venomzen/pi-web-access-enhanced",
+  "version": "0.1.0",
+  "description": "Personal enhanced fork of pi-web-access: web search, content extraction, GitHub repo cloning, PDF extraction, YouTube and local video analysis for Pi coding agent",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -13,16 +13,29 @@
     "fetch",
     "scraping"
   ],
-  "author": "Nico Bailon",
+  "author": "venomzen",
+  "contributors": [
+    "Nico Bailon"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-web-access.git"
+    "url": "git+https://github.com/venomwise/pi-web-access.git"
   },
   "bugs": {
-    "url": "https://github.com/nicobailon/pi-web-access/issues"
+    "url": "https://github.com/venomwise/pi-web-access/issues"
   },
-  "homepage": "https://github.com/nicobailon/pi-web-access#readme",
+  "homepage": "https://github.com/venomwise/pi-web-access#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "*.ts",
+    "skills",
+    "README.md",
+    "LICENSE",
+    "banner.png"
+  ],
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
     "linkedom": "^0.16.0",
@@ -37,6 +50,6 @@
     "skills": [
       "./skills"
     ],
-    "video": "https://github.com/nicobailon/pi-web-access/raw/refs/heads/main/pi-web-fetch-demo.mp4"
+    "video": "https://github.com/venomwise/pi-web-access/raw/refs/heads/main/pi-web-fetch-demo.mp4"
   }
 }
